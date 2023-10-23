@@ -10,6 +10,8 @@ class EDF:
         self.max_thrust = 0.0
         self.min_thrust = 0.0
         self.max_change = 100.0
+        self.current_draw = 0.0
+        self.max_current_draw = 94.0
 
     def update_target_thrust(self, thrust_target):
         self.target_thrust = thrust_target
@@ -19,13 +21,15 @@ class EDF:
         change = clamp(self.target_thrust, self.min_thrust, self.max_thrust)-self.thrust
         change = clamp(change, -self.max_change*dt, self.max_change*dt)
         self.thrust += change
+
+        self.current_draw = clamp(self.thrust/self.max_thrust, 0.0, 1) * self.max_current_draw
         
 
     def get_current_thrust(self):
         return self.thrust
     
 edf: EDF = EDF()
-edf.max_thrust = 5.0*9.816
+edf.max_thrust = 4*9.816
 edf.min_thrust = 0.0
 
 vehicle: physics_body = physics_body(
@@ -43,24 +47,33 @@ vehicle: physics_body = physics_body(
 def pd_calculate(err, d_err, kp, kd):
     return (err*kp) + (d_err*kd)
 
-t_end = 15.0
+t_end = 13
 time_step = 0.001
 sim_time = 0.0
 
 global burn_has_begun
 burn_has_begun = False
 
+global burn_alt
+burn_alt = 0.0
+
 pos_graph = []
 vel_graph = []
 acc_graph = []
 burn_alt_graph = []
+energy_graph = []
+current_draw_graph = []
+amp_hours_used = []
+watt_hours_used = []
 
 while sim_time < t_end:
 
     # update fan throttle calculations
 
     energy = vehicle.mass*( 0.5*(vehicle.velocity.length()**2) + 9.816*vehicle.position.x )
-    burn_alt = energy/(edf.max_thrust*0.95)
+    
+    if not burn_has_begun:
+        burn_alt = energy/(edf.max_thrust*0.9)
 
     if vehicle.position.x < burn_alt:
         burn_has_begun = True
@@ -77,8 +90,15 @@ while sim_time < t_end:
     pos_graph.append(vehicle.position.x)
     vel_graph.append(vehicle.velocity.x)
     acc_graph.append(vehicle.acceleration.x)
+    energy_graph.append(energy)
     burn_alt_graph.append(burn_alt)
-    
+    current_draw_graph.append(edf.current_draw)
+    if len(amp_hours_used) > 0:
+        amp_hours_used.append(amp_hours_used[-1]+(edf.current_draw/(3600/time_step)))
+    else:
+        amp_hours_used.append((edf.current_draw/(3600/time_step)))
+
+    watt_hours_used.append(amp_hours_used[-1]*(12*4.2))
     vehicle.clear()
 
     if vehicle.position.x < 0.0:
@@ -88,9 +108,30 @@ while sim_time < t_end:
 
 time_graph = np.arange(sim_time, step=time_step)
 
-plt.plot(time_graph, pos_graph)
-plt.plot(time_graph, vel_graph)
-plt.plot(time_graph, acc_graph)
-plt.plot(time_graph, burn_alt_graph)
+# energy_graph_metric = energy_graph
+
+energy_graph_imperial = [energy_graph[x] * 0.737562 for x in range(len(energy_graph))]
+
+plt.figure(1)
+
+plt.plot(time_graph, pos_graph, label="position")
+plt.plot(time_graph, vel_graph, label="velocity")
+plt.plot(time_graph, acc_graph, label="acceleration")
+plt.plot(time_graph, burn_alt_graph, label="engine start altitude")
+plt.legend()
+
+plt.figure(2)
+
+plt.plot(time_graph, energy_graph, label="kinetic energy")
+plt.plot(time_graph, energy_graph_imperial, label="kinetic energy imperial")
+plt.legend()
+
+plt.figure(3)
+
+plt.plot(time_graph, acc_graph, label="EDF thrust")
+plt.plot(time_graph, current_draw_graph, label="EDF current draw")
+plt.plot(time_graph, amp_hours_used, label="amp hours used")
+plt.plot(time_graph, watt_hours_used, label="watt hours used")
+plt.legend()
 
 plt.show()
